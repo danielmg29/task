@@ -2,7 +2,7 @@
 // WHY: Reusable component that can be used on any page
 // ADAPTIVE CONVERGENCE PREVIEW: Next week, this becomes DynamicTable
 
-'use client'; // WHAT: This is a Client Component (uses interactivity)
+'use client';
 
 import { useEffect, useState } from 'react';
 import { taskAPI, Task } from '@/lib/api';
@@ -24,18 +24,22 @@ export function TaskList() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Form input values
+  // Form input values (for creating new tasks)
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
 
   // Submission state
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Edit mode state
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
+
   
   /**
    * Fetch tasks when component mounts
-   * 
-   * useEffect with empty dependency array [] runs once on mount
    */
   useEffect(() => {
     fetchTasks();
@@ -62,7 +66,7 @@ export function TaskList() {
    * Handle form submission to create new task
    */
   async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault(); // Stop page reload
+    e.preventDefault();
     
     // Validate
     if (!title.trim()) {
@@ -81,11 +85,8 @@ export function TaskList() {
         completed: false,
       });
       
-      // Option 1: Add to existing state (optimistic update - faster UX)
-      setTasks([newTask, ...tasks]); // Add to beginning of list
-      
-      // Option 2: Refresh from server (if you want to be sure)
-      // await fetchTasks();
+      // Update local state
+      setTasks([newTask, ...tasks]);
       
       // Clear form
       setTitle('');
@@ -97,18 +98,64 @@ export function TaskList() {
       setIsSubmitting(false);
     }
   }
+
+  /**
+   * Start editing a task
+   */
+  function startEditing(task: Task) {
+    setEditingTaskId(task.id);
+    setEditTitle(task.title);
+    setEditDescription(task.description);
+    setEditError(null);
+  }
+
+  /**
+   * Cancel editing
+   */
+  function cancelEditing() {
+    setEditingTaskId(null);
+    setEditTitle('');
+    setEditDescription('');
+    setEditError(null);
+  }
+
+  /**
+   * Save edited task
+   */
+  async function saveEdit(taskId: number) {
+    // Validate
+    if (!editTitle.trim()) {
+      setEditError('Title is required');
+      return;
+    }
+
+    try {
+      const updatedTask = await taskAPI.update(taskId, {
+        title: editTitle.trim(),
+        description: editDescription.trim(),
+      });
+      
+      // Update local state
+      setTasks(tasks.map(t => 
+        t.id === taskId ? updatedTask : t
+      ));
+      
+      // Exit edit mode
+      cancelEditing();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Failed to update task');
+    }
+  }
   
   /**
    * Toggle task completion
    */
   async function toggleTask(task: Task) {
     try {
-      // Update the task
       const updatedTask = await taskAPI.update(task.id, {
         completed: !task.completed,
       });
       
-      // Update local state with response from server
       setTasks(tasks.map(t => 
         t.id === task.id ? updatedTask : t
       ));
@@ -129,8 +176,6 @@ export function TaskList() {
     
     try {
       await taskAPI.delete(id);
-      
-      // Remove from local state
       setTasks(tasks.filter(t => t.id !== id));
       
     } catch (err) {
@@ -148,7 +193,6 @@ export function TaskList() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Form Error Display */}
             {formError && (
               <Alert variant="destructive">
                 <AlertDescription>{formError}</AlertDescription>
@@ -212,28 +256,85 @@ export function TaskList() {
         <div className="space-y-4">
           {tasks.map((task) => (
             <Card key={task.id}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <div className="flex items-center space-x-4">
-                  <Checkbox
-                    checked={task.completed}
-                    onCheckedChange={() => toggleTask(task)}
-                  />
-                  <CardTitle className={task.completed ? 'line-through text-muted-foreground' : ''}>
-                    {task.title}
-                  </CardTitle>
-                </div>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => deleteTask(task.id)}
-                >
-                  Delete
-                </Button>
-              </CardHeader>
-              {task.description && (
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">{task.description}</p>
-                </CardContent>
+              {editingTaskId === task.id ? (
+                // EDIT MODE
+                <>
+                  <CardHeader>
+                    <CardTitle>Edit Task</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {editError && (
+                      <Alert variant="destructive">
+                        <AlertDescription>{editError}</AlertDescription>
+                      </Alert>
+                    )}
+                    
+                    <Input
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      placeholder="Task title"
+                    />
+                    
+                    <Textarea
+                      value={editDescription}
+                      onChange={(e) => setEditDescription(e.target.value)}
+                      placeholder="Description (optional)"
+                      rows={3}
+                    />
+                    
+                    <div className="flex items-center justify-end space-x-2">
+                      <Button 
+                        variant="outline" 
+                        onClick={cancelEditing}
+                      >
+                        Cancel
+                      </Button>
+                      <Button onClick={() => saveEdit(task.id)}>
+                        Save Changes
+                      </Button>
+                    </div>
+                  </CardContent>
+                </>
+              ) : (
+                // DISPLAY MODE
+                <>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <div className="flex items-center space-x-4 flex-1">
+                      <Checkbox
+                        checked={task.completed}
+                        onCheckedChange={() => toggleTask(task)}
+                      />
+                      <CardTitle 
+                        className={task.completed ? 'line-through text-muted-foreground' : ''}
+                      >
+                        {task.title}
+                      </CardTitle>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => startEditing(task)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => deleteTask(task.id)}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  {task.description && (
+                    <CardContent>
+                      <p className="text-sm text-muted-foreground">
+                        {task.description}
+                      </p>
+                    </CardContent>
+                  )}
+                </>
               )}
             </Card>
           ))}
